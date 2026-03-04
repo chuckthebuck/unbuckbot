@@ -4,14 +4,14 @@ import time
 from fastapi.testclient import TestClient
 
 import backend.app as backend
-from backend.app import RequesterPolicy, RollbackJob, RollbackTask, Session, app, state
+from backend.app import RequesterPolicy, RollbackJob, RollbackTask, Session, app
 
 client = TestClient(app)
 
 
 def _login_cookie(username: str = "CommonsRollbacker", rights: set[str] | None = None) -> str:
     sid = f"sess-{username}-{int(time.time() * 1000)}"
-    state.sessions[sid] = Session(
+    backend.state.sessions[sid] = Session(
         session_id=sid,
         access_token="oauth-token",
         username=username,
