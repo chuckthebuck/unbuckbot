@@ -83,6 +83,7 @@ class RollbackJob:
     owner: str
     requested_by: str
     tasks: list[RollbackTask]
+    dry_run: bool = False
     status: str = "queued"
     wiki: str = "commonswiki"
     created_at: float = field(default_factory=time.time)
@@ -115,6 +116,7 @@ class RollbackItem(BaseModel):
 class CreateJobRequest(BaseModel):
     requested_by: str = Field(min_length=1, max_length=255)
     items: list[RollbackItem] = Field(min_length=1, max_length=500)
+    dry_run: bool = False
 
 
 def _requester_policy(username: str) -> RequesterPolicy:
@@ -276,6 +278,7 @@ async def create_job(payload: CreateJobRequest, session: Session = Depends(requi
         owner=session.username,
         requested_by=payload.requested_by,
         tasks=[RollbackTask(title=i.title, user=i.user, summary=i.summary) for i in payload.items],
+        dry_run=payload.dry_run,
     )
     state.jobs[job_id] = job
     await state.queue.put(job_id)
@@ -294,6 +297,7 @@ async def get_job(job_id: str, session: Session = Depends(require_session)) -> d
         "wiki": job.wiki,
         "owner": job.owner,
         "requested_by": job.requested_by,
+        "dry_run": job.dry_run,
         "status": job.status,
         "total": len(job.tasks),
         "completed": job.completed,
@@ -341,6 +345,20 @@ async def _rollback_one(requested_by: str, task: RollbackTask) -> dict[str, Any]
     return await asyncio.to_thread(_commons_rollback_with_bot, requested_by, task)
 
 
+def _dry_run_result(requested_by: str, task: RollbackTask) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "title": task.title,
+        "requested_by": requested_by,
+        "dry_run": True,
+        "result": {
+            "simulated": True,
+            "user": task.user,
+            "summary": task.summary or f"Mass rollback via Toolforge bot; requested-by={requested_by}",
+        },
+    }
+
+
 async def job_worker() -> None:
     while True:
         job_id = await state.queue.get()
@@ -365,7 +383,7 @@ async def job_worker() -> None:
         for task in job.tasks:
             async with state.global_limiter:
                 try:
-                    item_result = await _rollback_one(job.requested_by, task)
+                    item_result = _dry_run_result(job.requested_by, task) if job.dry_run else await _rollback_one(job.requested_by, task)
                 except Exception as exc:  # noqa: BLE001
                     item_result = {
                         "ok": False,

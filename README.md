@@ -7,7 +7,8 @@ This project provides a Toolforge API backend plus a Commons userscript portlet 
 - A Toolforge-ready FastAPI backend (`backend/app.py`)
 - A default requester whitelist file (`config/requester_policies.json`) containing:
   - `Alachuckthebuck`
-- A Toolforge start script (`toolforge/start.sh`)
+- A Toolforge start script (`toolforge/start.sh`) with optional boot-time self-test
+- A GitHub Actions CI workflow that runs unit tests
 - A Build Service `Procfile` (`Procfile`)
 - A deployable env template (`.env.example`)
 - A Commons userscript client (`userscript/mass-rollback.user.js`)
@@ -18,6 +19,7 @@ This project provides a Toolforge API backend plus a Commons userscript portlet 
 2. **Toolforge API** authenticates requester via Wikimedia OAuth2 and validates that `requested_by` matches OAuth identity.
 3. **Async worker** executes Commons rollbacks using a dedicated **bot account** via `mwapi`.
 4. Rollback edits are marked bot edits and include requester attribution in summaries.
+5. Jobs can run in `dry_run` mode to validate request flow without performing real rollback actions.
 
 ## Bot account execution model
 
@@ -32,6 +34,7 @@ This project provides a Toolforge API backend plus a Commons userscript portlet 
 - Callback validates Commons `userinfo.rights` and requires `rollback` right.
 - Session cookie: `HttpOnly`, `Secure`, `SameSite=None`.
 - `POST /api/v1/jobs` requires `requested_by` to match authenticated user.
+- `POST /api/v1/jobs` accepts `dry_run: true` to simulate rollback execution without editing Commons.
 
 ## Whitelist + custom requester rate limits
 
@@ -56,6 +59,17 @@ Example policy format:
 - `POST /api/v1/jobs`
 - `GET /api/v1/jobs/{job_id}`
 
+
+## Testing
+
+Run tests locally:
+
+```bash
+pytest -q
+```
+
+CI executes this same command on every push and pull request via `.github/workflows/ci.yml`.
+
 ## Toolforge deployment instructions
 
 1. Clone the repo and enter it.
@@ -66,7 +80,8 @@ Example policy format:
    ```bash
    pip install -r requirements.txt
    ```
-5. Start with Toolforge webservice (Kubernetes), for example:
+5. Optional: enable startup self-test before webserver boot by setting `SELF_TEST_ON_BOOTUP=1`.
+6. Start with Toolforge webservice (Kubernetes), for example:
    ```bash
    webservice --backend kubernetes python3.11 start
    webservice shell
