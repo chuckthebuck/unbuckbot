@@ -1,0 +1,98 @@
+import time
+
+from fastapi.testclient import TestClient
+
+import backend.app as backend
+from backend.app import RequesterPolicy, Session, app, state
+
+
+client = TestClient(app)
+
+
+def _login_cookie(username: str = "CommonsRollbacker") -> str:
+    sid = f"sess-{username}"
+    state.sessions[sid] = Session(
+        session_id=sid,
+        access_token="oauth-token",
+        username=username,
+        rights={"rollback"},
+        expires_at=time.time() + 60,
+    )
+    return sid
+
+
+def test_create_job_success_whitelisted_requester():
+    backend.REQUESTER_POLICIES = {"CommonsRollbacker": RequesterPolicy(jobs_per_minute=3, max_items_per_job=10)}
+    backend.WHITELIST_ONLY = True
+
+    sid = _login_cookie()
+    response = client.post(
+        "/api/v1/jobs",
+        cookies={"unbuckbot_session": sid},
+        json={
+            "requested_by": "CommonsRollbacker",
+            "items": [{"title": "File:Sandbox.jpg", "user": "Vandal"}],
+        },
+    )
+    assert response.status_code == 200
+    assert "job_id" in response.json()
+
+
+def test_create_job_rejects_mismatched_requester():
+    backend.REQUESTER_POLICIES = {"CommonsRollbacker": RequesterPolicy(jobs_per_minute=3, max_items_per_job=10)}
+    backend.WHITELIST_ONLY = True
+
+    sid = _login_cookie()
+    response = client.post(
+        "/api/v1/jobs",
+        cookies={"unbuckbot_session": sid},
+        json={
+            "requested_by": "Imposter",
+            "items": [{"title": "File:Sandbox.jpg", "user": "Vandal"}],
+        },
+    )
+    assert response.status_code == 403
+
+
+def test_create_job_rate_limited_by_custom_policy():
+    backend.REQUESTER_POLICIES = {"BurstUser": RequesterPolicy(jobs_per_minute=2, max_items_per_job=10)}
+    backend.WHITELIST_ONLY = True
+
+    sid = _login_cookie("BurstUser")
+    payload = {
+        "requested_by": "BurstUser",
+        "items": [{"title": "File:Sandbox.jpg", "user": "Vandal"}],
+    }
+
+    for _ in range(2):
+        response = client.post("/api/v1/jobs", cookies={"unbuckbot_session": sid}, json=payload)
+        assert response.status_code == 200
+
+    blocked = client.post("/api/v1/jobs", cookies={"unbuckbot_session": sid}, json=payload)
+    assert blocked.status_code == 429
+
+
+def test_create_job_rejects_non_whitelisted_when_whitelist_only():
+    backend.REQUESTER_POLICIES = {"SomebodyElse": RequesterPolicy(jobs_per_minute=3, max_items_per_job=10)}
+    backend.WHITELIST_ONLY = True
+
+    sid = _login_cookie("NotListed")
+    payload = {
+        "requested_by": "NotListed",
+        "items": [{"title": "File:Sandbox.jpg", "user": "Vandal"}],
+    }
+    response = client.post("/api/v1/jobs", cookies={"unbuckbot_session": sid}, json=payload)
+    assert response.status_code == 403
+
+
+def test_load_requester_policies_from_file(tmp_path, monkeypatch):
+    policy_file = tmp_path / "policies.json"
+    policy_file.write_text('{"Alachuckthebuck": {"jobs_per_minute": 7, "max_items_per_job": 77}}', encoding="utf-8")
+
+    monkeypatch.setenv("REQUESTER_POLICIES_JSON", "")
+    monkeypatch.setenv("REQUESTER_POLICIES_FILE", str(policy_file))
+
+    loaded = backend._load_requester_policies()
+    assert "Alachuckthebuck" in loaded
+    assert loaded["Alachuckthebuck"].jobs_per_minute == 7
+    assert loaded["Alachuckthebuck"].max_items_per_job == 77
