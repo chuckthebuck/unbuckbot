@@ -10,7 +10,7 @@
 (function () {
   'use strict';
 
-  const TOOL_ENDPOINT = 'https://YOUR-TOOL.toolforge.org';
+  const TOOL_ENDPOINT = 'https://buckbot.toolforge.org';
 
   function addPortlet() {
     if (!window.mw || !mw.util) return;
